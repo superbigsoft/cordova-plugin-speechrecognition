@@ -159,6 +159,12 @@
         NSLog(@"stopListening()");
 
         if ( self.audioEngine.isRunning ) {
+            // Restore sound settings.
+            AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+            [audioSession setCategory:AVAudioSessionCategoryPlayback error:nil];
+            [audioSession setMode:AVAudioSessionModeDefault error:nil];
+            [audioSession setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
+        
             [self.audioEngine stop];
             [self.recognitionRequest endAudio];
         }
