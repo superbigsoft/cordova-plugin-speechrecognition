@@ -1,8 +1,9 @@
 #import <Cordova/CDV.h>
 #import <Speech/Speech.h>
 
-@interface SpeechRecognition : CDVPlugin
+@interface SpeechRecognition : CDVPlugin<AVAudioRecorderDelegate>
 
+- (void)pluginInitialize;
 - (void)isRecognitionAvailable:(CDVInvokedUrlCommand*)command;
 - (void)startListening:(CDVInvokedUrlCommand*)command;
 - (void)stopListening:(CDVInvokedUrlCommand*)command;
