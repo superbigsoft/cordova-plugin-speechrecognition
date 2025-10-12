@@ -11,6 +11,8 @@ import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserFactory;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -49,14 +51,12 @@ import android.widget.Toast;
 
 import androidx.annotation.RequiresApi;
 
-import com.arthenica.mobileffmpeg.Config;
-import com.arthenica.mobileffmpeg.FFmpeg;
-import com.langkingdom.langkingdom.R;
-
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -64,8 +64,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import static android.widget.Toast.LENGTH_LONG;
-import static com.arthenica.mobileffmpeg.FFmpeg.RETURN_CODE_CANCEL;
-import static com.arthenica.mobileffmpeg.FFmpeg.RETURN_CODE_SUCCESS;
+
+import capacitor.cordova.android.plugins.R;
 
 public class SpeechRecognition extends CordovaPlugin {
 
@@ -86,6 +86,31 @@ public class SpeechRecognition extends CordovaPlugin {
   private JSONArray mLastPartialResults = new JSONArray();
 
   private static final String RECORD_AUDIO_PERMISSION = Manifest.permission.RECORD_AUDIO;
+
+  private static final String PROMPT_LAYOUT = """
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/speech_reg_prompt_layout"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#FFFFFF"
+              android:orientation="vertical"
+              android:paddingLeft="50dp"
+              android:paddingRight="50dp"
+              android:paddingBottom="20dp">
+          
+              <TextView
+                  android:id="@+id/txtPrompt"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="13dp"
+                  android:textAlignment="center"
+                  android:textColor="#FF9800"
+                  android:textSize="18sp"
+                  android:textStyle="bold" 
+                  android:text="%s"/>
+          </LinearLayout>
+          """;
 
   private CallbackContext callbackContext;
   private LanguageDetailsChecker languageDetailsChecker;
@@ -337,19 +362,26 @@ public class SpeechRecognition extends CordovaPlugin {
 
   private Toast mToastToShow;
   public CountDownTimer showToast(String msg) {
-    LayoutInflater inflater =  cordova.getActivity().getLayoutInflater();
-    View layout = inflater.inflate(R.layout.speech_reg_prompt, (ViewGroup) cordova.getActivity().findViewById(R.id.speech_reg_prompt_layout));
-    TextView tv = (TextView) layout.findViewById(R.id.txtPrompt);
-    tv.setText(msg);
-
     mToastToShow = new Toast(context);
-    mToastToShow.setGravity(Gravity.CENTER_VERTICAL| Gravity.CENTER_HORIZONTAL, 0, 600);
-    mToastToShow.setDuration(Toast.LENGTH_SHORT);
-    mToastToShow.setView(layout);
+
+    try {
+      XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+      factory.setNamespaceAware(true);
+      XmlPullParser xpp = factory.newPullParser();
+      xpp.setInput(new StringReader(String.format(PROMPT_LAYOUT, msg)));
+
+      LayoutInflater inflater = cordova.getActivity().getLayoutInflater();
+      View layout = inflater.inflate(xpp, null);
+
+      mToastToShow.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL, 0, 600);
+      mToastToShow.setDuration(Toast.LENGTH_SHORT);
+      mToastToShow.setView(layout);
+    }  catch (Exception e) {
+      e.printStackTrace();
+    }
 
     // Set the countdown to display the toast
-    CountDownTimer toastCountDown;
-    toastCountDown = new CountDownTimer(200000, 1000 /*Tick duration*/) {
+    CountDownTimer toastCountDown = new CountDownTimer(200000, 1000 /*Tick duration*/) {
       public void onTick(long millisUntilFinished) {
         activity.runOnUiThread(new Runnable() {
           @Override
@@ -365,6 +397,7 @@ public class SpeechRecognition extends CordovaPlugin {
           }
         });
       }
+
       public void onFinish() {
         mToastToShow.cancel();
       }
@@ -426,18 +459,7 @@ public class SpeechRecognition extends CordovaPlugin {
   private String covertAmrToMp4(String inputFile) {
     String outputFile = inputFile.replaceAll(".amr", ".m4a");
 
-    int rc = FFmpeg.execute("-ss 0.2 -i " + inputFile + " -ar 22050 " + outputFile);
-
-    if (rc == RETURN_CODE_SUCCESS) {
-      Log.i(Config.TAG, "Command execution completed successfully.");
-      (new File(inputFile)).delete();
-    } else if (rc == RETURN_CODE_CANCEL) {
-      Log.i(Config.TAG, "Command execution cancelled by user.");
-    } else {
-      Log.i(Config.TAG, String.format("Command execution failed with rc=%d and the output below.", rc));
-    }
-
-    return outputFile;
+    return inputFile;
   }
 
   @Override
