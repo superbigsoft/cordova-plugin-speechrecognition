@@ -10,26 +10,62 @@ import org.apache.cordova.PluginResult;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ContentResolver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 
 import android.Manifest;
+import android.graphics.Color;
+import android.graphics.PorterDuff;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.media.MediaRecorder;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 
+import android.os.CountDownTimer;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 
 import android.util.Log;
+import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import android.widget.Toast;
 
+import androidx.annotation.RequiresApi;
+
+import com.arthenica.mobileffmpeg.Config;
+import com.arthenica.mobileffmpeg.FFmpeg;
+import com.langkingdom.langkingdom.R;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+
+import static android.widget.Toast.LENGTH_LONG;
+import static com.arthenica.mobileffmpeg.FFmpeg.RETURN_CODE_CANCEL;
+import static com.arthenica.mobileffmpeg.FFmpeg.RETURN_CODE_SUCCESS;
 
 public class SpeechRecognition extends CordovaPlugin {
 
@@ -57,6 +93,8 @@ public class SpeechRecognition extends CordovaPlugin {
   private Context context;
   private View view;
   private SpeechRecognizer recognizer;
+  private File mUserVoiceFile;
+  private CountDownTimer mToastTimerCountDown;
 
   @Override
   public void initialize(CordovaInterface cordova, CordovaWebView webView) {
@@ -67,9 +105,69 @@ public class SpeechRecognition extends CordovaPlugin {
     view = webView.getView();
 
     view.post(new Runnable() {
+      @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR1)
       @Override
       public void run() {
         recognizer = SpeechRecognizer.createSpeechRecognizer(activity);
+
+        // Init speech reg 1st time.
+        if (audioPermissionGranted(RECORD_AUDIO_PERMISSION)) {
+          final AudioManager audioManager = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
+          try {
+            /*
+            try {
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.GINGERBREAD && Settings.Global.getInt(activity.getContentResolver(), "zen_mode") == 0) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0);
+              }
+            } catch (Settings.SettingNotFoundException ex) {
+              // Ignore;
+            }
+            */
+            final Intent intent = new Intent(RecognizerIntent.ACTION_GET_LANGUAGE_DETAILS);
+            recognizer.startListening(intent);
+            recognizer.cancel();
+          } catch (SecurityException ex) {
+            activity.runOnUiThread(new Runnable() {
+              @Override
+              public void run() {
+                AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(activity);
+                alertDialogBuilder.setTitle("Speech Recognition");
+                alertDialogBuilder.setMessage("Please install Google App from Google Play to use feature Speech Recognition.");
+                alertDialogBuilder.setNegativeButton("Dismiss", new DialogInterface.OnClickListener() {
+                  public void onClick(DialogInterface dialog, int which) {
+                    try {
+                      activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.googlequicksearchbox")));
+                    } catch (android.content.ActivityNotFoundException anfe) {
+                      activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox")));
+                    }
+                    dialog.dismiss();
+                  }
+                });
+
+                AlertDialog dialog = alertDialogBuilder.create();
+                // Showing Alert Message
+                alertDialogBuilder.show();
+              }
+            });
+          } finally {
+            /*
+            final Handler handler = new Handler(Looper.getMainLooper());
+            handler.postDelayed(new Runnable() {
+              @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR1)
+              @Override
+              public void run() {
+                try {
+                  if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.GINGERBREAD && Settings.Global.getInt(activity.getContentResolver(), "zen_mode") == 0) {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0);
+                  }
+                } catch (Settings.SettingNotFoundException ex) {
+                  // Ignore;
+                }
+              }
+            }, 1000);*/
+          }
+        }
+
         SpeechRecognitionListener listener = new SpeechRecognitionListener();
         recognizer.setRecognitionListener(listener);
       }
@@ -128,7 +226,7 @@ public class SpeechRecognition extends CordovaPlugin {
             if(recognizer != null) {
               recognizer.stopListening();
             }
-            callbackContextStop.success();
+            callbackContextStop.success(mUserVoiceFile != null? "file://" + mUserVoiceFile.getAbsolutePath(): "");
           }
         });
         return true;
@@ -163,6 +261,7 @@ public class SpeechRecognition extends CordovaPlugin {
 
   private void startListening(String language, int matches, String prompt, final Boolean showPartial, Boolean showPopup) {
     Log.d(LOG_TAG, "startListening() language: " + language + ", matches: " + matches + ", prompt: " + prompt + ", showPartial: " + showPartial + ", showPopup: " + showPopup);
+    mUserVoiceFile = null;
 
     final Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
     intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
@@ -173,21 +272,106 @@ public class SpeechRecognition extends CordovaPlugin {
             activity.getPackageName());
     intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, showPartial);
     intent.putExtra("android.speech.extra.DICTATION_MODE", showPartial);
-
+    intent.putExtra("android.speech.extra.GET_AUDIO_FORMAT", "audio/AMR");
+    intent.putExtra("android.speech.extra.GET_AUDIO", true);
     if (prompt != null) {
       intent.putExtra(RecognizerIntent.EXTRA_PROMPT, prompt);
     }
 
     if (showPopup) {
       cordova.startActivityForResult(this, intent, REQUEST_CODE_SPEECH);
+
+      if (prompt != null && prompt.trim().length() > 0) {
+        mToastTimerCountDown = showToast(prompt);
+      }
     } else {
+      //final String fileName = context.getExternalCacheDir().getAbsolutePath() + "/audiorecordtest.3gp";
+      //s_filename = fileName;
       view.post(new Runnable() {
         @Override
         public void run() {
           recognizer.startListening(intent);
+          //startRecording(fileName);
         }
       });
     }
+  }
+
+  private static String s_filename = "";
+
+  private static void startPlaying(String fileName) {
+    MediaPlayer player = new MediaPlayer();
+    try {
+      player.setDataSource(fileName);
+      player.prepare();
+      player.start();
+    } catch (Exception e) {
+      Log.e(LOG_TAG, "prepare() failed");
+    }
+  }
+
+  private static void stopRecording() {
+    recorder.stop();
+    recorder.release();
+    recorder = null;
+
+    startPlaying(s_filename);
+  }
+
+  private static void startRecording(String fileName) {
+    recorder = new MediaRecorder();
+    recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+    recorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
+    recorder.setOutputFile(fileName);
+    recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+    try {
+      recorder.prepare();
+    } catch (Exception e) {
+      Log.e(LOG_TAG, "prepare() failed");
+    }
+
+    recorder.start();
+  }
+
+  private static MediaRecorder recorder;
+
+  private Toast mToastToShow;
+  public CountDownTimer showToast(String msg) {
+    LayoutInflater inflater =  cordova.getActivity().getLayoutInflater();
+    View layout = inflater.inflate(R.layout.speech_reg_prompt, (ViewGroup) cordova.getActivity().findViewById(R.id.speech_reg_prompt_layout));
+    TextView tv = (TextView) layout.findViewById(R.id.txtPrompt);
+    tv.setText(msg);
+
+    mToastToShow = new Toast(context);
+    mToastToShow.setGravity(Gravity.CENTER_VERTICAL| Gravity.CENTER_HORIZONTAL, 0, 600);
+    mToastToShow.setDuration(Toast.LENGTH_SHORT);
+    mToastToShow.setView(layout);
+
+    // Set the countdown to display the toast
+    CountDownTimer toastCountDown;
+    toastCountDown = new CountDownTimer(200000, 1000 /*Tick duration*/) {
+      public void onTick(long millisUntilFinished) {
+        activity.runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+            Log.d(LOG_TAG, "###Toast repeated");
+            try {
+              if (mToastTimerCountDown != null) {
+                mToastToShow.show();
+              }
+            } catch (Throwable ex) {
+              // Ignore
+            }
+          }
+        });
+      }
+      public void onFinish() {
+        mToastToShow.cancel();
+      }
+    };
+    mToastToShow.show();
+    toastCountDown.start();
+    return toastCountDown;
   }
 
   private void getSupportedLanguages() {
@@ -239,16 +423,51 @@ public class SpeechRecognition extends CordovaPlugin {
     }
   }
 
+  private String covertAmrToMp4(String inputFile) {
+    String outputFile = inputFile.replaceAll(".amr", ".m4a");
+
+    int rc = FFmpeg.execute("-ss 0.2 -i " + inputFile + " -ar 22050 " + outputFile);
+
+    if (rc == RETURN_CODE_SUCCESS) {
+      Log.i(Config.TAG, "Command execution completed successfully.");
+      (new File(inputFile)).delete();
+    } else if (rc == RETURN_CODE_CANCEL) {
+      Log.i(Config.TAG, "Command execution cancelled by user.");
+    } else {
+      Log.i(Config.TAG, String.format("Command execution failed with rc=%d and the output below.", rc));
+    }
+
+    return outputFile;
+  }
+
   @Override
   public void onActivityResult(int requestCode, int resultCode, Intent data) {
     Log.d(LOG_TAG, "onActivityResult() requestCode: " + requestCode + ", resultCode: " + resultCode);
-
     if (requestCode == REQUEST_CODE_SPEECH) {
+      if (mToastTimerCountDown != null) {
+        mToastTimerCountDown.cancel();
+        mToastTimerCountDown = null;
+      }
+      if (mToastToShow != null) {
+        mToastToShow.cancel();
+      }
       if (resultCode == Activity.RESULT_OK) {
         try {
+          Uri audioUri = data.getData();
+          ContentResolver contentResolver = this.context.getContentResolver();
+          InputStream filestream = contentResolver.openInputStream(audioUri);
+          byte[] buffer = new byte[filestream.available()];
+          filestream.read(buffer);
+          mUserVoiceFile = File.createTempFile("voice", ".amr", context.getCacheDir());
+          OutputStream outStream = new FileOutputStream(mUserVoiceFile);
+          outStream.write(buffer);
+          mUserVoiceFile = new File(covertAmrToMp4(mUserVoiceFile.getAbsolutePath()));
+
           ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-          JSONArray jsonMatches = new JSONArray(matches);
-          this.callbackContext.success(jsonMatches);
+          Map resultMap = new HashMap();
+          resultMap.put("isFinal", true);
+          resultMap.put("matches", matches);
+          this.callbackContext.success(new JSONObject(resultMap));
         } catch (Exception e) {
           e.printStackTrace();
           this.callbackContext.error(e.getMessage());
@@ -298,7 +517,11 @@ public class SpeechRecognition extends CordovaPlugin {
                 && matches.size() > 0
                         && !mLastPartialResults.equals(matchesJSON)) {
           mLastPartialResults = matchesJSON;
-          PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, matchesJSON);
+
+          Map resultMap = new HashMap();
+          resultMap.put("isPartial", true);
+          resultMap.put("matches", matches);
+          PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, new JSONObject(resultMap));
           pluginResult.setKeepCallback(true);
           callbackContext.sendPluginResult(pluginResult);
         }
@@ -318,8 +541,11 @@ public class SpeechRecognition extends CordovaPlugin {
       ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
       Log.d(LOG_TAG, "SpeechRecognitionListener results: " + matches);
       try {
-        JSONArray jsonMatches = new JSONArray(matches);
-        callbackContext.success(jsonMatches);
+        Map resultMap = new HashMap();
+        resultMap.put("isFinal", true);
+        resultMap.put("matches", matches);
+        callbackContext.success(new JSONObject(resultMap));
+        //SpeechRecognition.stopRecording();
       } catch (Exception e) {
         e.printStackTrace();
         callbackContext.error(e.getMessage());
