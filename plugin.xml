@@ -31,6 +31,8 @@
     <config-file target="AndroidManifest.xml" parent="/*">
       <uses-permission android:name="android.permission.RECORD_AUDIO" />
     </config-file>
+    <framework src="androidx.media3:media3-common:1.8.0" />
+    <framework src="androidx.media3:media3-transformer:1.8.0" />
    <resource-file src="src/android/res/layout/prompt.xml" target="res/layout/prompt.xml" />
     <source-file src="src/android/com/pbakondy/AudioConverter.java" target-dir="src/com/pbakondy" />
     <source-file src="src/android/com/pbakondy/SpeechRecognition.java" target-dir="src/com/pbakondy" />
